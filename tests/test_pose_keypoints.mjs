@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readPoseKeypoints, requireBody, largestBody } from '../web/editor/pose-keypoints.mjs';
+import { readPoseKeypoints, requireBody, completeMissingLegs, largestBody } from '../web/editor/pose-keypoints.mjs';
 import { ORDER } from '../web/editor/state.mjs';
 const triples = Array.from({ length: 18 }, (_, i) => [10.25 + i * 3, 20.75 + i * 5, 1]);
 const frame = { canvas_width: 512, canvas_height: 768, people: [{ pose_keypoints_2d: triples.flat() }] };
@@ -16,6 +16,12 @@ assert.deepEqual(readPoseKeypoints({ ...frame, people: [{ pose_keypoints_2d: bod
 const missing = structuredClone(frame);
 missing.people[0].pose_keypoints_2d[4 * 3 + 2] = 0;
 assert.throws(() => requireBody(readPoseKeypoints(missing).people[0]), /关节不完整/);
+const cropped = structuredClone(frame);
+for (const index of [9, 10, 12, 13]) cropped.people[0].pose_keypoints_2d[index * 3 + 2] = 0;
+const visible = readPoseKeypoints(cropped).people[0];
+assert.equal(Object.keys(requireBody(completeMissingLegs(visible))).length, ORDER.length);
+assert.equal(visible.lk, undefined, 'missing joints remain absent from the saved detection');
+assert.deepEqual(completeMissingLegs(visible).lk, [visible.lh[0], visible.lh[1] + 1]);
 assert.throws(() => readPoseKeypoints({ ...frame, people: [] }), /未识别到/);
 const invalid = structuredClone(frame);
 invalid.people[0].pose_keypoints_2d[0] = NaN;

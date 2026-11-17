@@ -30,8 +30,20 @@ export function largestBody(people) {
 
 export function requireBody(points) {
     const missing = ORDER.filter(key => !points[key]);
-    if (missing.length) throw Error('身体关节不完整，请使用头、手腕和脚踝都可见的参考图；当前人偶未改变');
+    if (missing.length) throw Error('身体关节不完整，请换关节点更清晰的参考图；当前人偶未改变');
     return points;
+}
+
+// A cropped portrait can still supply the upper-body pose. The lift needs a full
+// skeleton; these short downward segments are replaced with the current leg pose.
+export function completeMissingLegs(points) {
+    const filled = { ...points };
+    for (const [hip, knee, ankle] of [['lh', 'lk', 'la'], ['rh', 'rk', 'ra']]) {
+        if (!filled[hip]) continue;
+        if (!filled[knee]) filled[knee] = [filled[hip][0], filled[hip][1] + 1];
+        if (!filled[ankle]) filled[ankle] = [filled[knee][0], filled[knee][1] + 1];
+    }
+    return filled;
 }
 
 export function poseOverlay(photo, detection) {

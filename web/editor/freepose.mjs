@@ -5,7 +5,7 @@ import { PoseViewerCore } from '../vnccs/vnccs_pose_studio_core.mjs?v=20261005-s
 import { loadMorphPack, solveMorph, buildStaticModelData } from '../vnccs/vnccs_pose_morph_runtime.mjs';
 import { HAND_PRESETS } from '../vnccs/vnccs_hand_presets.mjs';
 import { readSkeletonImage } from './pose-import.mjs';
-import { readPoseKeypoints, largestBody, requireBody, poseOverlay } from './pose-keypoints.mjs';
+import { readPoseKeypoints, largestBody, requireBody, completeMissingLegs, poseOverlay } from './pose-keypoints.mjs?v=20261009-cropped-pose';
 import { liftOpenPose, WORLD_KEYPOINT_NAMES } from './openpose-lift.mjs';
 import { COMMON_POSES, directionKeypoints } from './common-poses.mjs';
 import { isGroupPose, bindingRuntimeProblem } from '../binding_runtime.mjs';
@@ -315,10 +315,11 @@ function importKeypoints(build) {
     const keep = doc.people ? { ...doc.transform } : null; // with two people, a new pose must not move anyone
     doc.transform = { ...NEUTRAL_TRANSFORM };
     viewer.setActiveCharacterAppearance({ transform: doc.transform });
+    const previous = restJoints().rest;
     resetPose();
     viewer.skinnedMesh.updateMatrixWorld(true);
     const { rest, head, pelvis } = restJoints();
-    const { kps, ...extra } = build(rest, head);
+    const { kps, ...extra } = build(rest, head, previous);
     const THREE = viewer.THREE;
     const worldKps = Object.fromEntries(Object.entries(WORLD_KEYPOINT_NAMES).map(([key, name]) => [name, new THREE.Vector3(...kps[key].map((v, i) => v + pelvis[i]))]));
     // Hip sockets, head, hands and feet have no reliable source; keep the mannequin's own.
@@ -332,8 +333,12 @@ const refit = snap => (doc.people ? updateCamera(snap) : fitFrame(snap));
 
 function applyOpenPose() {
     const { points, flips } = doc.openpose;
-    const { facingAway } = importKeypoints((rest, head) => {
-        const lifted = liftOpenPose(points, rest, flips, doc.openpose.depthMode);
+    const { facingAway } = importKeypoints((rest, head, previous) => {
+        const lifted = liftOpenPose(completeMissingLegs(points), rest, flips, doc.openpose.depthMode);
+        for (const [hip, knee, ankle] of [['lh', 'lk', 'la'], ['rh', 'rk', 'ra']]) {
+            if (!points[knee]) lifted.kps[knee] = lifted.kps[hip].map((v, i) => v + previous[knee][i] - previous[hip][i]);
+            if (!points[ankle]) lifted.kps[ankle] = lifted.kps[knee].map((v, i) => v + previous[ankle][i] - previous[knee][i]);
+        }
         // The spine IK target is the head bone origin, not the nose: keep the nose direction at head-bone distance.
         const headDistance = Math.hypot(...head.map((v, i) => v - rest.neck[i]));
         const direction = lifted.kps.head.map((v, i) => v - lifted.kps.neck[i]);
@@ -764,12 +769,14 @@ $('#pose-preview-overlay').onchange = event => {
 $('#apply-detected-pose').onclick = () => {
     if (!detectedPose) return;
     try {
-        const points = requireBody(largestBody(detectedPose.people));
+        const points = largestBody(detectedPose.people);
+        requireBody(completeMissingLegs(points));
         doc.openpose = { key: 'photo', name: detectedPose.name, points, flips: {}, depthMode: 'planar' };
         applyOpenPose();
         const count = detectedPose.people.length > 1 ? `图中有 ${detectedPose.people.length} 人，已取最大的一个。` : '';
-        $('#import-status').textContent = `已按原图关节点贴合动作。${count}当前保留二维方向；需要前后深度可在下方切换「估算立体」。手势需单独调整。`;
-    } catch (error) { $('#import-status').textContent = `应用失败：${error.message}`; }
+        const legs = ['lk', 'la', 'rk', 'ra'].some(key => !points[key]) ? '未识别到的腿部关节保留原姿势。' : '';
+        $('#import-status').textContent = `已按原图关节点贴合动作。${count}${legs}当前保留二维方向；需要前后深度可在下方切换「估算立体」。手势需单独调整。`;
+    } catch (error) { $('#import-status').textContent = `应用失败：${error.message}`; toast(`应用失败：${error.message}`); }
 };
 
 // --- Two people -------------------------------------------------------------
